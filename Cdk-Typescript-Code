@@ -1,0 +1,68 @@
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
+
+export class MyCdkStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // VPC with 2 public and 2 private subnets, having a single NAT gateway
+    const vpc = new ec2.Vpc(this, 'MyVpc', {
+      maxAzs: 2,
+      natGateways: 1,
+      subnetConfiguration: [
+        {
+          subnetType: ec2.SubnetType.PUBLIC,
+          name: 'Public',
+        },
+        {
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          name: 'Private',
+        },
+      ],
+    });
+
+    // ECS Cluster
+    const cluster = new ecs.Cluster(this, 'EcsCluster', {
+      vpc,
+    });
+
+    // ECS Task Definition
+    const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef', {
+      memoryLimitMiB: 512,  // 0.5 GB
+      cpu: 256,  // 0.25 vCPU
+    });
+
+    taskDefinition.addContainer('MyContainer', {
+      image: ecs.ContainerImage.fromRegistry('amazon/amazon-ecs-sample'),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'MyApp' }),
+      memoryLimitMiB: 512,  // 0.5 GB
+      cpu: 256,  // 0.25 vCPU
+    }).addPortMappings({
+      containerPort: 8080,
+    });
+
+    // ECS Service with ALB
+    const ecsService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'MyALBService', {
+      cluster,
+      taskDefinition,
+      desiredCount: 2,
+      listenerPort: 8080,
+      publicLoadBalancer: true,
+      taskSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+    });
+
+    // Output the ALB URL
+    new cdk.CfnOutput(this, 'ALBURL', {
+      value: ecsService.loadBalancer.loadBalancerDnsName,
+    });
+  }
+}
+
+const app = new cdk.App();
+new MyCdkStack(app, 'MyCdkStack');
+app.synth();
